@@ -1,0 +1,597 @@
+**FIFA 21 Data Analysis Project**
+
+**Part 1: FIFA 21 Data Cleaning and Preparation**
+
+**Project Overview**
+
+This project cleans and prepares the FIFA 21 dataset for further analysis. The main steps include data cleaning, data quality checks, feature engineering, and the creation of summary tables.
+
+**1.1. Setup**
+
+```{r, echo=FALSE}
+packages <- c("tidyverse", "ggplot2", "dplyr","readxl")
+
+install.packages(
+  packages,
+  repos = "https://cloud.r-project.org"
+)
+library(tidyverse)
+library(readxl)
+library(dplyr)
+library(ggplot2)
+```
+
+**1.2. Load Data**
+
+```{r,echo=TRUE}
+fifa_raw <- read.csv(
+  "Data Cleaning Exercise fifa21_raw_data-2.csv"
+)
+library(dplyr)
+glimpse(fifa_raw)
+```
+**1.3. Data Cleaning**
+
+**1.3.1 Remove Whitespace, Newlines, and Tabs**
+```{r, echo=TRUE}
+library(dplyr)
+library(stringr)
+data <- fifa_raw %>%
+  mutate(
+    across(
+      where(is.character),
+      ~ str_squish(
+        str_replace_all(.x, "[\r\n\t]+", " ")
+      )
+    )
+  )
+
+head(data)
+```
+**1.3.2 Convert Height to Inches**
+
+The original height values are converted from feet and inches into a single numerical value in inches.
+
+```{r, echo=TRUE}
+data$Height <- str_remove(data$Height, "\"")
+
+data$Height <- as.numeric(sub(".*'", "", data$Height)) +
+  12 * as.numeric(sub("'.*", "", data$Height))
+
+head(data$Height)
+```
+**1.3.3 Convert Weight from Pounds to Kilograms**
+```{r, echo=TRUE}
+data$Weight <- as.numeric(
+  str_remove(data$Weight, "lbs")
+)
+
+data$Weight <- data$Weight / 2.20462
+
+data$Weight <- round(data$Weight, digits = 0)
+
+head(data$Weight)
+```
+**1.4. Convert Financial Variables**
+
+The variables Value, Wage, and Release Clause contain currency symbols and abbreviations such as K and M.
+
+```{r, echo=TRUE}
+money_to_number <- function(x) {
+  
+  x <- str_remove_all(x, "[€,$£]")
+  
+  multiplier <- case_when(
+    str_detect(x, "M") ~ 1000000,
+    str_detect(x, "K") ~ 1000,
+    TRUE ~ 1
+  )
+  
+  number <- parse_number(x)
+  
+  number * multiplier
+}
+
+library(readr)
+library(dplyr)
+library(stringr)
+data <- data %>%
+  mutate(
+    across(
+      c(Value, Wage, Release.Clause),
+      money_to_number
+    )
+  )
+
+head(
+  data %>%
+    select(Value, Wage, Release.Clause)
+)
+```
+**1.5. Convert Star Ratings**
+
+The variables W.F, SM, and IR contain star symbols. These are converted into numeric values.
+```{r, echo=TRUE}
+data <- data %>%
+  mutate(
+    across(
+      c(W.F, SM, IR),
+      ~ as.numeric(
+        str_remove_all(
+          as.character(.x),
+          "[★☆[:space:]]"
+        )
+      )
+    )
+  )
+
+head(
+  data %>%
+    select(W.F, SM, IR)
+)
+```
+
+**1.6. Convert Joined Date**
+```{r, echo=TRUE}
+library(lubridate)
+data <- data %>%
+  mutate(
+    Joined = parse_date_time(
+      Joined,
+      orders = c("b d, Y", "dmy", "mdy")
+    ) %>%
+      as.Date()
+  )
+
+head(data$Joined)
+```
+**1.7. Calculate Years at the Club**
+```{r, echo=TRUE}
+data <- data %>%
+  mutate(
+    years_at_club = round(
+      time_length(
+        interval(Joined, Sys.Date()),
+        "years"
+      ),
+      2
+    )
+  )
+
+head(
+  data %>%
+    select(Joined, years_at_club)
+)
+```
+**1.8. Data Quality Checks**
+
+Check Dataset Structure
+```{r, echo=TRUE}
+glimpse(data)
+```
+Check Missing Values
+```{r, echo=TRUE}
+colSums(is.na(data))
+```
+Check for Remaining Newlines and Tabs
+```{r, echo=TRUE}
+data %>%
+  filter(
+    if_any(
+      where(is.character),
+      ~ str_detect(.x, "[\n\r\t]")
+    )
+  )
+```
+Check for Remaining Extra Whitespace
+```{r, echo=TRUE}
+data %>%
+  filter(
+    if_any(
+      where(is.character),
+      ~ .x != str_squish(.x)
+    )
+  )
+```
+**1.9. Feature Engineering**
+
+Create Key Dummy Variables
+```{r, echo=TRUE}
+data <- data %>%
+  mutate(
+    Left = if_else(foot == "Left", 1L, 0L),
+    Striker = if_else(BP == "ST", 1L, 0L),
+    Goalie = if_else(BP == "GK", 1L, 0L)
+  )
+
+head(
+  data %>%
+    select(foot, BP, Left, Striker, Goalie)
+)
+```
+Create Position Dummy Variables
+```{r, echo=TRUE}
+position_dummies <- as.data.frame(
+  model.matrix(~ 0 + BP, data = data)
+)
+
+head(position_dummies)
+```
+Create the Field Players Dataset
+
+Goalkeepers are removed to focus the analysis on field players.
+```{r, echo=TRUE}
+field_players <- data %>%
+  filter(BP != "GK")
+
+dim(field_players)
+head(field_players)
+```
+**1.10. Dataset Overview**
+```{r, echo=TRUE}
+dataset_overview <- tibble(
+  Metric = c(
+    "Number of rows",
+    "Number of columns",
+    "Key variables"
+  ),
+  
+  Description = c(
+    as.character(nrow(data)),
+    as.character(ncol(data)),
+    paste(
+      c(
+        "Name", "Age", "Height", "Weight",
+        "Value", "Wage", "BP", "Dribbling",
+        "Agility", "Interceptions"
+      ),
+      collapse = ", "
+    )
+  )
+)
+
+dataset_overview
+```
+**1.11. Missing Values Summary**
+```{r, echo=TRUE}
+missing_summary <- tibble(
+  Variable = names(data),
+  Missing_Count = colSums(is.na(data)),
+  Missing_Percentage = round(
+    colSums(is.na(data)) / nrow(data) * 100,
+    2
+  )
+) %>%
+  filter(Missing_Count > 0) %>%
+  arrange(desc(Missing_Count))
+
+missing_summary
+```
+**1.12. Residual Whitespace Check**
+```{r, echo=TRUE}
+whitespace_check <- tibble(
+  Variable = names(data),
+  
+  Residual_Newlines_Tabs = sapply(data, function(x) {
+    if (is.character(x)) {
+      sum(
+        str_detect(x, "[\r\n\t]+"),
+        na.rm = TRUE
+      )
+    } else {
+      0
+    }
+  }),
+  
+  Residual_Extra_Whitespace = sapply(data, function(x) {
+    if (is.character(x)) {
+      sum(
+        x != str_trim(str_squish(x)),
+        na.rm = TRUE
+      )
+    } else {
+      0
+    }
+  })
+)
+
+whitespace_check
+```
+Summary of Whitespace Issues
+```{r, echo=TRUE}
+table3_summary <- whitespace_check %>%
+  summarise(
+    `Newline/Tab Issues` = sum(Residual_Newlines_Tabs),
+    `Extra Whitespace Issues` = sum(
+      Residual_Extra_Whitespace
+    )
+  )
+
+table3_summary
+```
+**1.13. Final Dataset Summary**
+```{r, echo=TRUE}
+cat(
+  "Original dataset dimensions:",
+  dim(fifa_raw),
+  "\n"
+)
+
+cat(
+  "Cleaned dataset dimensions:",
+  dim(data),
+  "\n"
+)
+
+cat(
+  "Field players dimensions:",
+  dim(field_players),
+  "\n"
+)
+```
+**Conclusion**
+
+The FIFA 21 dataset has been cleaned and prepared for further analysis.
+
+The final datasets include:
+
+data: The complete cleaned FIFA 21 dataset.
+
+field_players: The dataset excluding goalkeepers.
+
+position_dummies: Dummy variables representing player positions.
+
+**Part 2: Predicting and Improving Player OVA**
+
+**Project Overview**
+
+This analysis uses a regression model to predict a center back's Overall Rating (OVA) based on key defensive and physical attributes.
+
+The analysis focuses on O. Hüsing and uses P. Mainka as a benchmark for player development. Several improvement scenarios are created to estimate how improvements in defensive skills could affect Hüsing's predicted OVA.
+
+**2.1 Data Preparation**
+
+**2.1.1 Select Benchmark Players**
+
+This analysis compares O. Hüsing with P. Mainka using key defensive and physical attributes.
+```{r, echo=TRUE}
+cb_benchmark <- field_players %>%
+  filter(Name %in% c("P. Mainka", "O. Hüsing")) %>%
+  select(
+    Name,
+    Age,
+    X.OVA,
+    POT,
+    Interceptions,
+    Standing.Tackle,
+    Sliding.Tackle,
+    Heading.Accuracy,
+    Strength,
+    Sprint.Speed
+  )
+
+cb_benchmark
+```
+
+**2.2 Create Player Development Targets**
+
+Development targets are created for O. Hüsing's key defensive attributes.
+```{r,echo=TRUE}
+husing_target <- cb_benchmark %>%
+  filter(Name == "O. Hüsing") %>%
+  mutate(
+    Interceptions = 76,
+    Standing.Tackle = 77,
+    Sliding.Tackle = 72
+  )
+
+husing_target
+```
+**2.3. Regression Analysis**
+
+**2.3.1 Prepare Center Back Model Data**
+```{r,echo=TRUE}
+cb_model_data <- field_players %>%
+  filter(BP == "CB") %>%
+  select(
+    X.OVA,
+    Interceptions,
+    Standing.Tackle,
+    Sliding.Tackle,
+    Heading.Accuracy,
+    Strength,
+    Sprint.Speed
+  ) %>%
+  na.omit()
+
+head(cb_model_data)
+```
+**2.3.2 Build the Regression Model**
+
+The regression model predicts OVA based on defensive and physical attributes.
+```{r,echo=TRUE}
+cb_model <- lm(
+  X.OVA ~ Interceptions +
+    Standing.Tackle +
+    Sliding.Tackle +
+    Heading.Accuracy +
+    Strength +
+    Sprint.Speed,
+  data = cb_model_data
+)
+
+summary(cb_model)
+```
+**2.4. Model Evaluation**
+
+**2.4.1 Check Multicollinearity**
+
+The Variance Inflation Factor (VIF) is used to examine relationships among predictor variables.
+
+```{r,echo=FALSE}
+library(car)
+```
+```{r,echo=TRUE}
+vif(cb_model)
+```
+**2.4.2 Regression Diagnostic Plots**
+```{r,echo=TRUE}
+par(mfrow = c(2, 2))
+
+plot(cb_model)
+
+par(mfrow = c(1, 1))
+```
+
+The diagnostic plots include:
+
+Residuals vs Fitted
+
+Normal Q-Q
+
+Scale-Location
+
+Residuals vs Leverage
+
+**2.5. OVA Prediction and Improvement Analysis**
+
+**2.5.1 Predict Current and Improved OVA**
+
+First, create datasets representing Hüsing's current and improved attributes.
+```{r,echo=TRUE}
+husing_current <- cb_benchmark %>%
+  filter(Name == "O. Hüsing") %>%
+  select(
+    Interceptions,
+    Standing.Tackle,
+    Sliding.Tackle,
+    Heading.Accuracy,
+    Strength,
+    Sprint.Speed
+  )
+husing_improved <- husing_target %>%
+  select(
+    Interceptions,
+    Standing.Tackle,
+    Sliding.Tackle,
+    Heading.Accuracy,
+    Strength,
+    Sprint.Speed
+  )
+
+husing_current
+husing_improved
+```
+**2.5.2 Compare Current and Improved OVA**
+```{r,echo=TRUE}
+current_ova <- predict(
+  cb_model,
+  newdata = husing_current
+)
+
+improved_ova <- predict(
+  cb_model,
+  newdata = husing_improved
+)
+
+comparison <- data.frame(
+  Scenario = c(
+    "Current Hüsing",
+    "Improved Hüsing"
+  ),
+  Predicted_OVA = c(
+    current_ova,
+    improved_ova
+  )
+)
+
+comparison
+```
+**2.5.3 Calculate the Predicted OVA Change**
+```{r,echo=TRUE}
+predicted_change <- improved_ova - current_ova
+
+predicted_change
+```
+**2.6. OVA Improvement Scenarios**
+
+This section simulates different development scenarios to evaluate how individual improvements affect predicted OVA.
+
+**2.6.1 Define Current Player Attributes**
+```{r,echo=TRUE}
+husing_current <- data.frame(
+  Interceptions = 63,
+  Standing.Tackle = 71,
+  Sliding.Tackle = 67,
+  Heading.Accuracy = 76,
+  Strength = 90,
+  Sprint.Speed = 55
+)
+husing_current
+```
+**2.6.2 Create Improvement Scenarios**
+
+Scenario 1: Improve 
+```{r,echo=TRUE}
+scenario1 <- husing_current
+scenario1$Interceptions <- 76
+```
+Scenario 2: Improve Standing Tackle
+```{r,echo=TRUE}
+scenario2 <- scenario1
+scenario2$Standing.Tackle <- 77
+```
+Scenario 3: Improve Sliding Tackle
+```{r,echo=TRUE}
+scenario3 <- scenario2
+scenario3$Sliding.Tackle <- 72
+```
+**2.6.3 Predict OVA for All Scenarios**
+```{r,echo=TRUE}
+result <- data.frame(
+  Scenario = c(
+    "Current Hüsing",
+    "Improve Interceptions",
+    "Improve Defensive Core",
+    "Full Development Target"
+  ),
+  
+  Predicted_OVA = c(
+    predict(cb_model, husing_current),
+    predict(cb_model, scenario1),
+    predict(cb_model, scenario2),
+    predict(cb_model, scenario3)
+  )
+)
+
+result
+
+```
+**2.7. Key Results**
+
+The regression model is used to estimate how improvements in defensive skills affect O. Hüsing's predicted OVA.
+
+The analysis compares four scenarios:
+
+Current Hüsing – Current player attributes.
+
+Improve Interceptions – Interceptions increased to 76.
+
+Improve Defensive Core – Interceptions and Standing Tackle improved.
+
+Full Development Target – Interceptions, Standing Tackle, and Sliding Tackle improved.
+
+The final scenario predicts the highest OVA and demonstrates how targeted player development can support improvements in overall performance.
+
+**Conclusion**
+
+This analysis demonstrates how regression analysis can support player development decisions.
+
+By simulating different improvement scenarios, the model identifies how changes in key defensive attributes may affect a center back's predicted OVA. The results provide a data-driven approach for evaluating player development priorities.
+
+```{r, include=FALSE}
+browseURL(
+  normalizePath("Fifa_cleaner&improve_2"),
+  browser = "C:/Program Files/Google/Chrome/Application/chrome.exe"
+)
+```
